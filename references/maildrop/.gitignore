@@ -1,0 +1,13 @@
+node_modules/
+dist/
+*.log
+.DS_Store
+.env
+*.tsbuildinfo
+
+# Example/test files (may contain credentials)
+example*.ts
+*example*.ts
+test*.ts
+*.test.ts
+
