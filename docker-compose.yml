@@ -1,0 +1,28 @@
+services:
+  resender:
+    build: .
+    # Or pull a prebuilt image instead of building:
+    # image: ghcr.io/allenpilares/resender:latest
+    container_name: resender
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      # SQLite database and the generated session secret live here.
+      - ./data:/data
+    environment:
+      # Public URL used to render endpoint URLs and copy-paste snippets in the UI.
+      # Change to your real domain, e.g. "https://forms.example.com".
+      BASE_URL: "http://localhost:3000"
+      #
+      # --- Recommended: change the admin password from the default "admin" ---
+      # ADMIN_PASSWORD: "change-me-please"
+      #
+      # Set to "true" when running behind nginx/Caddy so client IPs (used for
+      # rate limiting and logs) are read from X-Forwarded-For.
+      # TRUST_PROXY: "true"
+      #
+      # Optional overrides (sensible defaults shown):
+      # PORT: "3000"
+      # DATA_DIR: "/data"
+      # SESSION_SECRET: ""   # auto-generated and persisted to /data/secret if unset
