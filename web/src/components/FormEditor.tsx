@@ -23,7 +23,13 @@ export default function FormEditor({ initial, submitLabel, onSubmit, onCancel }:
   const [name, setName] = useState(initial?.name ?? '');
   const [slug, setSlug] = useState(initial?.slug ?? '');
   const [slugTouched, setSlugTouched] = useState(isEdit);
-  const [destination, setDestination] = useState(initial?.destination_email ?? '');
+  const [destinations, setDestinations] = useState<string[]>(
+    initial?.destination_emails?.length
+      ? initial.destination_emails
+      : initial?.destination_email
+        ? [initial.destination_email]
+        : [],
+  );
   const [subject, setSubject] = useState(initial?.subject_template ?? 'New submission from {{form}}');
   const [origins, setOrigins] = useState<string[]>(initial?.allowed_origins ?? []);
   const [redirect, setRedirect] = useState(initial?.redirect_url ?? '');
@@ -36,12 +42,16 @@ export default function FormEditor({ initial, submitLabel, onSubmit, onCancel }:
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     setError(null);
+    if (destinations.length === 0) {
+      setError('Add at least one destination email.');
+      return;
+    }
     setSaving(true);
     try {
       await onSubmit({
         name: name.trim(),
         slug: effectiveSlug || undefined,
-        destination_email: destination.trim(),
+        destination_emails: destinations,
         subject_template: subject.trim() || undefined,
         allowed_origins: origins,
         redirect_url: redirect.trim(),
@@ -80,14 +90,21 @@ export default function FormEditor({ initial, submitLabel, onSubmit, onCancel }:
         />
       </Field>
 
-      <Field label="Destination email" htmlFor="destination" hint="Where submissions are delivered.">
-        <input
-          id="destination"
-          type="email"
-          className={inputClass}
-          value={destination}
-          onChange={(e) => setDestination(e.target.value)}
-          required
+      <Field
+        label="Destination emails"
+        hint="Every submission is delivered to all addresses. Press Enter or comma after each address."
+      >
+        <TagInput
+          values={destinations}
+          onChange={(values) => {
+            setDestinations(values);
+            setError(null);
+          }}
+          placeholder="name@example.com"
+          inputType="email"
+          validate={(value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)}
+          invalidMessage="Enter a valid email address."
+          maxValues={20}
         />
       </Field>
 
@@ -156,17 +173,44 @@ function TagInput({
   values,
   onChange,
   placeholder,
+  inputType = 'text',
+  validate,
+  invalidMessage = 'Invalid value.',
+  maxValues,
 }: {
   values: string[];
   onChange: (v: string[]) => void;
   placeholder?: string;
+  inputType?: 'text' | 'email';
+  validate?: (value: string) => boolean;
+  invalidMessage?: string;
+  maxValues?: number;
 }) {
   const [draft, setDraft] = useState('');
+  const [inputError, setInputError] = useState<string | null>(null);
 
   const add = () => {
-    const v = draft.trim();
-    if (v && !values.includes(v)) onChange([...values, v]);
+    const candidates = draft
+      .split(',')
+      .map((value) => value.trim())
+      .filter(Boolean);
+    if (candidates.length === 0) return;
+    if (validate && candidates.some((value) => !validate(value))) {
+      setInputError(invalidMessage);
+      return;
+    }
+
+    const next = [...values];
+    for (const value of candidates) {
+      if (!next.some((existing) => existing.toLowerCase() === value.toLowerCase())) next.push(value);
+    }
+    if (maxValues !== undefined && next.length > maxValues) {
+      setInputError(`You can add up to ${maxValues} values.`);
+      return;
+    }
+    onChange(next);
     setDraft('');
+    setInputError(null);
   };
 
   const onKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
@@ -179,31 +223,39 @@ function TagInput({
   };
 
   return (
-    <div className="flex flex-wrap items-center gap-2 rounded-md bg-white p-2 ring-1 ring-inset ring-gray-300 focus-within:ring-2 focus-within:ring-indigo-600 dark:bg-gray-800 dark:ring-gray-700">
-      {values.map((v) => (
-        <span
-          key={v}
-          className="inline-flex items-center gap-1 rounded bg-indigo-50 px-2 py-1 text-xs font-medium text-indigo-700 dark:bg-indigo-500/10 dark:text-indigo-300"
-        >
-          {v}
-          <button
-            type="button"
-            onClick={() => onChange(values.filter((x) => x !== v))}
-            className="text-indigo-400 hover:text-indigo-600 dark:hover:text-indigo-200"
-            aria-label={`Remove ${v}`}
+    <div>
+      <div className="flex flex-wrap items-center gap-2 rounded-md bg-white p-2 ring-1 ring-inset ring-gray-300 focus-within:ring-2 focus-within:ring-indigo-600 dark:bg-gray-800 dark:ring-gray-700">
+        {values.map((v) => (
+          <span
+            key={v}
+            className="inline-flex items-center gap-1 rounded bg-indigo-50 px-2 py-1 text-xs font-medium text-indigo-700 dark:bg-indigo-500/10 dark:text-indigo-300"
           >
-            ×
-          </button>
-        </span>
-      ))}
-      <input
-        value={draft}
-        onChange={(e) => setDraft(e.target.value)}
-        onKeyDown={onKeyDown}
-        onBlur={add}
-        placeholder={values.length === 0 ? placeholder : ''}
-        className="min-w-[8rem] flex-1 bg-transparent px-1 py-1 text-sm text-gray-900 outline-none placeholder:text-gray-400 dark:text-gray-100"
-      />
+            {v}
+            <button
+              type="button"
+              onClick={() => onChange(values.filter((x) => x !== v))}
+              className="text-indigo-400 hover:text-indigo-600 dark:hover:text-indigo-200"
+              aria-label={`Remove ${v}`}
+            >
+              ×
+            </button>
+          </span>
+        ))}
+        <input
+          type={inputType}
+          multiple={inputType === 'email'}
+          value={draft}
+          onChange={(e) => {
+            setDraft(e.target.value);
+            setInputError(null);
+          }}
+          onKeyDown={onKeyDown}
+          onBlur={add}
+          placeholder={values.length === 0 ? placeholder : ''}
+          className="min-w-[8rem] flex-1 bg-transparent px-1 py-1 text-sm text-gray-900 outline-none placeholder:text-gray-400 dark:text-gray-100"
+        />
+      </div>
+      {inputError && <p className="mt-1.5 text-xs text-red-600 dark:text-red-400">{inputError}</p>}
     </div>
   );
 }

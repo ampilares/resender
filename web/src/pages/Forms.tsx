@@ -67,7 +67,7 @@ export default function Forms() {
                       </Link>
                     </td>
                     <td className="px-5 py-3 font-mono text-gray-600 dark:text-gray-400">{f.slug}</td>
-                    <td className="px-5 py-3 text-gray-600 dark:text-gray-400">{f.destination_email}</td>
+                    <td className="px-5 py-3 text-gray-600 dark:text-gray-400">{f.destination_emails.join(', ')}</td>
                     <td className="px-5 py-3">
                       {f.enabled ? (
                         <StatusBadge status="sent" label="active" />

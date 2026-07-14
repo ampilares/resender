@@ -16,7 +16,7 @@ provider auto-detection) was inspired by the `references/maildrop` library inclu
 - **JSON API for SPAs** — post `application/json` and get `{ "ok": true, "id": "…" }` back.
 - **Programmatic send** — a Resend-style `POST /api/v1/send` with a Bearer API key.
 - **Safe by default** — per-form API keys (stored hashed), origin allowlist, honeypot field,
-  in-memory rate limiting, and recipients locked to a configured destination (never an open relay).
+  in-memory rate limiting, and recipients locked to configured destinations (never an open relay).
 - **Admin UI** — connect Gmail, create forms, copy ready-made snippets, and browse submission logs.
 - **Single container** — one port, one SQLite file on a mounted volume.
 
@@ -70,7 +70,14 @@ which requires 2-Step Verification:
 2. Go to <https://myaccount.google.com/apppasswords>.
 3. Create a new app password (name it e.g. "resender"). Google shows a 16-character string.
 4. In the resender admin UI → **Settings**, enter your Gmail address and paste the app password
-   (spaces don't matter), set a "from name", then click **Send test email** to verify.
+   (spaces don't matter), set the From name/address, then click **Send test email** to verify.
+
+To send from a Google Workspace alias, use the primary Google account as **SMTP login email** and
+its app password, then enter the alias as **From email**. For example, an SMTP login of
+`amp@rethink-tech.com` can send as `mail@pixelmate.com.au` when that alias is configured and
+permitted in Google Workspace. Because Workspace domains cannot be auto-detected as Gmail, also
+enable **Use custom SMTP server** and set `smtp.gmail.com`, port `587`, with the secure/port-465
+option off (STARTTLS is negotiated automatically).
 
 resender auto-detects the SMTP host from the email domain (Gmail, Outlook/Hotmail/Live, Yahoo,
 Zoho, iCloud). For anything else, expand **Use custom SMTP** and set host/port/secure explicitly.
@@ -174,8 +181,8 @@ function ContactForm() {
 ### Programmatic send (`/api/v1/send`, Bearer key)
 
 For transactional emails from your backend. Each form has an API key (`rsk_…`, shown once when the
-form is created or its key is regenerated). The recipient is **always** the form's configured
-destination — there is no `to` field, so the key can never be used as an open relay.
+form is created or its key is regenerated). The recipients are **always** the form's configured
+destinations — there is no `to` field, so the key can never be used as an open relay.
 
 ```bash
 curl https://forms.example.com/api/v1/send \

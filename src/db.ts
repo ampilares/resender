@@ -7,6 +7,7 @@ export interface FormRow {
   name: string;
   slug: string;
   destination_email: string;
+  destination_emails: string;
   subject_template: string;
   allowed_origins: string;
   redirect_url: string | null;
@@ -76,7 +77,36 @@ const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    version: 2,
+    name: 'multiple destination emails',
+    up(db) {
+      db.exec(`ALTER TABLE forms ADD COLUMN destination_emails TEXT NOT NULL DEFAULT '[]'`);
+      const rows = db.prepare('SELECT id, destination_email FROM forms').all() as Array<{
+        id: string;
+        destination_email: string;
+      }>;
+      const update = db.prepare('UPDATE forms SET destination_emails = ? WHERE id = ?');
+      for (const row of rows) {
+        update.run(JSON.stringify([row.destination_email]), row.id);
+      }
+    },
+  },
 ];
+
+/** Read the recipient list, falling back to the legacy single-address column. */
+export function getDestinationEmails(form: FormRow): string[] {
+  try {
+    const parsed = JSON.parse(form.destination_emails) as unknown;
+    if (Array.isArray(parsed)) {
+      const emails = parsed.filter((value): value is string => typeof value === 'string' && value.length > 0);
+      if (emails.length > 0) return emails;
+    }
+  } catch {
+    // Fall through to the legacy column for pre-migration or malformed rows.
+  }
+  return [form.destination_email];
+}
 
 /**
  * Open the SQLite database, apply pragmas, and run any pending numbered

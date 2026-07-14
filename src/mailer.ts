@@ -7,6 +7,7 @@ export interface Settings {
   smtp_host?: string;
   smtp_port?: string;
   smtp_secure?: string;
+  from_email?: string;
   from_name?: string;
 }
 
@@ -17,7 +18,7 @@ export interface SmtpConfig {
 }
 
 export interface SendArgs {
-  to: string;
+  to: string | string[];
   subject: string;
   html?: string;
   text?: string;
@@ -120,7 +121,7 @@ export function buildTransport(settings: Settings): Transporter {
 
 /** Compose the RFC 5322 From header from settings. */
 export function fromHeader(settings: Settings): string {
-  const email = settings.smtp_email ?? '';
+  const email = settings.from_email?.trim() || settings.smtp_email || '';
   const name = settings.from_name?.trim();
   return name ? `"${name.replace(/"/g, '')}" <${email}>` : email;
 }

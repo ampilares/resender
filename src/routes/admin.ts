@@ -2,7 +2,7 @@ import type { FastifyInstance, FastifyPluginAsync, FastifyReply, FastifyRequest 
 import { nanoid } from 'nanoid';
 import { z } from 'zod';
 import type { AppContext } from '../index.js';
-import type { DB, FormRow, SubmissionRow } from '../db.js';
+import { getDestinationEmails, type DB, type FormRow, type SubmissionRow } from '../db.js';
 import {
   clearSessionCookie,
   createSessionToken,
@@ -38,6 +38,7 @@ interface FormPublic {
   name: string;
   slug: string;
   destination_email: string;
+  destination_emails: string[];
   subject_template: string;
   allowed_origins: string[];
   redirect_url: string | null;
@@ -48,6 +49,7 @@ interface FormPublic {
 }
 
 function toFormPublic(form: FormRow, baseUrl: string): FormPublic {
+  const destinationEmails = getDestinationEmails(form);
   let origins: string[] = [];
   try {
     origins = JSON.parse(form.allowed_origins) as string[];
@@ -58,7 +60,8 @@ function toFormPublic(form: FormRow, baseUrl: string): FormPublic {
     id: form.id,
     name: form.name,
     slug: form.slug,
-    destination_email: form.destination_email,
+    destination_email: destinationEmails[0]!,
+    destination_emails: destinationEmails,
     subject_template: form.subject_template,
     allowed_origins: Array.isArray(origins) ? origins : [],
     redirect_url: form.redirect_url,
@@ -125,6 +128,7 @@ export const adminRoutes: FastifyPluginAsync<PluginOpts> = async (app: FastifyIn
       smtp_host: s.smtp_host ?? '',
       smtp_port: s.smtp_port ?? '',
       smtp_secure: s.smtp_secure === 'true' || s.smtp_secure === '1',
+      from_email: s.from_email ?? '',
       from_name: s.from_name ?? '',
     };
   });
@@ -136,6 +140,7 @@ export const adminRoutes: FastifyPluginAsync<PluginOpts> = async (app: FastifyIn
       smtp_host: z.string().optional(),
       smtp_port: z.union([z.string(), z.number()]).optional(),
       smtp_secure: z.boolean().optional(),
+      from_email: z.string().trim().email().optional().or(z.literal('')),
       from_name: z.string().max(120).optional(),
     });
     const parsed = schema.safeParse(request.body);
@@ -150,6 +155,7 @@ export const adminRoutes: FastifyPluginAsync<PluginOpts> = async (app: FastifyIn
     if (b.smtp_host !== undefined) patch.smtp_host = b.smtp_host;
     if (b.smtp_port !== undefined) patch.smtp_port = String(b.smtp_port);
     if (b.smtp_secure !== undefined) patch.smtp_secure = b.smtp_secure ? 'true' : 'false';
+    if (b.from_email !== undefined) patch.from_email = b.from_email;
     if (b.from_name !== undefined) patch.from_name = b.from_name;
     writeSettings(db, patch);
     return reply.send({ ok: true });
@@ -179,15 +185,33 @@ export const adminRoutes: FastifyPluginAsync<PluginOpts> = async (app: FastifyIn
     return { forms: rows.map((r) => toFormPublic(r, config.baseUrl)) };
   });
 
-  const formInput = z.object({
+  const emailSchema = z.string().trim().email();
+  const formFields = {
     name: z.string().min(1).max(120),
     slug: z.string().max(60).optional(),
-    destination_email: z.string().email(),
+    // destination_email remains accepted for backwards-compatible API clients.
+    destination_email: emailSchema.optional(),
+    destination_emails: z.array(emailSchema).min(1).max(20).optional(),
     subject_template: z.string().max(200).optional(),
     allowed_origins: z.array(z.string()).max(50).optional(),
     redirect_url: z.string().url().optional().or(z.literal('')),
     enabled: z.boolean().optional(),
+  };
+  const formInput = z.object(formFields).refine((body) => body.destination_emails || body.destination_email, {
+    message: 'Provide at least one destination email.',
+    path: ['destination_emails'],
   });
+  const formPatch = z.object(formFields).partial();
+
+  const normalizeDestinations = (values: string[]): string[] => {
+    const seen = new Set<string>();
+    return values.filter((email) => {
+      const key = email.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  };
 
   app.post('/api/admin/forms', async (request, reply) => {
     const parsed = formInput.safeParse(request.body);
@@ -203,16 +227,18 @@ export const adminRoutes: FastifyPluginAsync<PluginOpts> = async (app: FastifyIn
       return reply.code(409).send({ ok: false, error: `Slug "${slug}" is already in use.` });
     }
 
+    const destinations = normalizeDestinations(b.destination_emails ?? [b.destination_email!]);
     const key = generateApiKey();
     const id = nanoid(12);
     db.prepare(
-      `INSERT INTO forms (id, name, slug, destination_email, subject_template, allowed_origins, redirect_url, api_key_hash, api_key_prefix, enabled)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO forms (id, name, slug, destination_email, destination_emails, subject_template, allowed_origins, redirect_url, api_key_hash, api_key_prefix, enabled)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       id,
       b.name,
       slug,
-      b.destination_email,
+      destinations[0]!,
+      JSON.stringify(destinations),
       b.subject_template && b.subject_template.length > 0 ? b.subject_template : 'New submission from {{form}}',
       JSON.stringify(b.allowed_origins ?? []),
       b.redirect_url && b.redirect_url.length > 0 ? b.redirect_url : null,
@@ -237,7 +263,7 @@ export const adminRoutes: FastifyPluginAsync<PluginOpts> = async (app: FastifyIn
     const form = getForm(db, id);
     if (!form) return reply.code(404).send({ ok: false, error: 'Form not found.' });
 
-    const parsed = formInput.partial().safeParse(request.body);
+    const parsed = formPatch.safeParse(request.body);
     if (!parsed.success) {
       return reply.code(400).send({ ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid form.' });
     }
@@ -253,15 +279,23 @@ export const adminRoutes: FastifyPluginAsync<PluginOpts> = async (app: FastifyIn
       }
     }
 
+    const destinations =
+      b.destination_emails !== undefined
+        ? normalizeDestinations(b.destination_emails)
+        : b.destination_email !== undefined
+          ? [b.destination_email]
+          : getDestinationEmails(form);
+
     db.prepare(
       `UPDATE forms SET
-         name = ?, slug = ?, destination_email = ?, subject_template = ?,
+         name = ?, slug = ?, destination_email = ?, destination_emails = ?, subject_template = ?,
          allowed_origins = ?, redirect_url = ?, enabled = ?
        WHERE id = ?`,
     ).run(
       b.name ?? form.name,
       slug,
-      b.destination_email ?? form.destination_email,
+      destinations[0]!,
+      JSON.stringify(destinations),
       b.subject_template ?? form.subject_template,
       b.allowed_origins !== undefined ? JSON.stringify(b.allowed_origins) : form.allowed_origins,
       b.redirect_url !== undefined ? (b.redirect_url.length > 0 ? b.redirect_url : null) : form.redirect_url,

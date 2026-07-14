@@ -3,7 +3,7 @@ import { nanoid } from 'nanoid';
 import { z } from 'zod';
 import cors from '@fastify/cors';
 import type { AppContext } from '../index.js';
-import type { DB, FormRow } from '../db.js';
+import { getDestinationEmails, type DB, type FormRow } from '../db.js';
 import { hashApiKey } from '../auth.js';
 import { readSettings, sendEmail } from '../mailer.js';
 import { renderSubmission } from '../emailTemplate.js';
@@ -213,7 +213,7 @@ export const publicRoutes: FastifyPluginAsync<PluginOpts> = async (app: FastifyI
     const { html, text } = renderSubmission(form.name, payload);
 
     const result = await sendEmail(settings, {
-      to: form.destination_email,
+      to: getDestinationEmails(form),
       subject,
       html,
       text,
@@ -267,7 +267,7 @@ export const publicRoutes: FastifyPluginAsync<PluginOpts> = async (app: FastifyI
 
     const settings = readSettings(db);
     const result = await sendEmail(settings, {
-      to: form.destination_email, // recipient is ALWAYS the form's destination
+      to: getDestinationEmails(form), // recipient is ALWAYS the form's destination
       subject,
       html,
       text,

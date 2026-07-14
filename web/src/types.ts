@@ -9,6 +9,7 @@ export interface Form {
   name: string;
   slug: string;
   destination_email: string;
+  destination_emails: string[];
   subject_template: string;
   allowed_origins: string[];
   redirect_url: string | null;
@@ -21,7 +22,7 @@ export interface Form {
 export interface FormInput {
   name: string;
   slug?: string;
-  destination_email: string;
+  destination_emails: string[];
   subject_template?: string;
   allowed_origins?: string[];
   redirect_url?: string;
@@ -34,6 +35,7 @@ export interface Settings {
   smtp_host: string;
   smtp_port: string | number;
   smtp_secure: boolean;
+  from_email: string;
   from_name: string;
 }
 

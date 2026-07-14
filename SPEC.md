@@ -15,7 +15,7 @@ mailer module, but resender is a full service, not a library.
 - Zero external dependencies at runtime: SQLite on disk, no Redis/Postgres.
 - Simple auth: single admin password ("dev login") — this is a personal/small-team tool.
 - Safe by default: per-form API keys, origin allowlist, honeypot, rate limiting,
-  recipients locked to configured destination (never an open relay).
+  recipients locked to configured destinations (never an open relay).
 - Easy integration: plain HTML `<form action=...>` works with no JavaScript; JSON fetch
   works for SPAs.
 
@@ -76,13 +76,14 @@ the `settings` table (single-user tool on a private VPS; document this trade-off
 ```sql
 -- settings: single-row key/value
 CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
--- keys: smtp_email, smtp_password, smtp_host?, smtp_port?, smtp_secure?, from_name
+-- keys: smtp_email, smtp_password, smtp_host?, smtp_port?, smtp_secure?, from_email?, from_name
 
 CREATE TABLE forms (
   id TEXT PRIMARY KEY,              -- nanoid(12)
   name TEXT NOT NULL,               -- "allenpilares.com contact"
   slug TEXT NOT NULL UNIQUE,        -- url-safe, e.g. "allenpilares-contact"
-  destination_email TEXT NOT NULL,  -- where submissions are delivered
+  destination_email TEXT NOT NULL,  -- legacy/primary destination
+  destination_emails TEXT NOT NULL DEFAULT '[]', -- JSON recipient list
   subject_template TEXT NOT NULL DEFAULT 'New submission from {{form}}',
   allowed_origins TEXT NOT NULL DEFAULT '[]',  -- JSON array; empty = allow all (warn in UI)
   redirect_url TEXT,                -- 302 target for non-JS HTML form posts
@@ -124,7 +125,7 @@ only as sha256 hash + prefix.
   `Origin`/`Referer` host must match; mismatch = 403) → rate limit (default 5 requests
   per minute per IP per form; over = 429, record `rate_limited`) → payload non-empty,
   max 50 fields, each value max 10 KB.
-- Sends email: to `destination_email`, from `"<from_name>" <smtp_email>`, Reply-To
+- Sends email: to every address in `destination_emails`, from `"<from_name>" <from_email>`, falling back to `smtp_email`, Reply-To
   submitter, subject from template (`{{form}}`, `{{subject}}` placeholders), HTML body =
   clean table of submitted fields (via `emailTemplate.ts`) + plain-text alternative.
 - Response: JSON request → `200 {"ok":true,"id":"..."}`. Form-encoded request → 302 to
@@ -138,7 +139,7 @@ only as sha256 hash + prefix.
 - Auth: `Authorization: Bearer rsk_...` (matched by hash against a form; the form's
   destination is the implicit recipient).
 - Body (JSON): `{ subject, html?, text?, replyTo? }` — at least one of html/text.
-  **No `to` field**: recipient is always the form's `destination_email` (prevents use
+  **No `to` field**: recipient is always the form's configured destination emails (prevents use
   as an open relay).
 - Same send/log pipeline. Response `200 {"ok":true,"id":...}` / `401` / `502`.
 
@@ -152,7 +153,8 @@ only as sha256 hash + prefix.
 - `GET /api/admin/me` → `{authenticated, defaultPassword: bool, smtpConfigured: bool}`
 - `GET/POST /api/admin/settings` — SMTP email/password (password write-only: GET returns
   `smtp_password_set: true/false`, never the value), optional host/port/secure override,
-  from_name. Auto-detect host from email domain like maildrop when no override.
+  from_email and from_name. The From address falls back to smtp_email when unset. Auto-detect host
+  from the SMTP login email domain like maildrop when no override.
 - `POST /api/admin/settings/test` `{to?}` — sends a test email (default: to smtp_email),
   returns success or the SMTP error message verbatim.
 - `GET/POST /api/admin/forms`, `GET/PATCH/DELETE /api/admin/forms/:id`,

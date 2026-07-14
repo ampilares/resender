@@ -109,7 +109,7 @@ export default function FormDetail() {
           <CopyButton text={endpoint} />
         </div>
         <dl className="mt-4 grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
-          <Detail label="Destination" value={form.destination_email} />
+          <Detail label="Destinations" value={form.destination_emails.join(', ')} />
           <Detail label="Subject template" value={form.subject_template} mono />
           <Detail
             label="Allowed origins"

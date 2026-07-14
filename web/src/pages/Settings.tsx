@@ -9,6 +9,7 @@ export default function Settings() {
   const [loaded, setLoaded] = useState<SettingsData | null>(null);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [fromEmail, setFromEmail] = useState('');
   const [fromName, setFromName] = useState('');
   const [useCustom, setUseCustom] = useState(false);
   const [host, setHost] = useState('');
@@ -27,6 +28,7 @@ export default function Settings() {
       const s = await api.get<SettingsData>('/api/admin/settings');
       setLoaded(s);
       setEmail(s.smtp_email);
+      setFromEmail(s.from_email);
       setFromName(s.from_name);
       setHost(s.smtp_host);
       setPort(s.smtp_port ? String(s.smtp_port) : '');
@@ -43,6 +45,7 @@ export default function Settings() {
     try {
       const body: Record<string, unknown> = {
         smtp_email: email.trim(),
+        from_email: fromEmail.trim(),
         from_name: fromName.trim(),
       };
       // Password is write-only; only send when the user typed a new value.
@@ -93,14 +96,14 @@ export default function Settings() {
         <Card className="space-y-5 p-5">
           <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Gmail / SMTP</h2>
 
-          <Field label="Gmail address" htmlFor="email" hint="The account submissions are sent from.">
+          <Field label="SMTP login email" htmlFor="email" hint="The Google account that owns the app password.">
             <input
               id="email"
               type="email"
               className={inputClass}
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              placeholder="you@gmail.com"
+              placeholder="you@example.com"
             />
           </Field>
 
@@ -124,6 +127,20 @@ export default function Settings() {
             />
           </Field>
 
+          <Field
+            label="From email"
+            htmlFor="fromEmail"
+            hint="The address recipients see. It must be an alias that your SMTP account is allowed to send as. Leave blank to use the login email."
+          >
+            <input
+              id="fromEmail"
+              type="email"
+              className={inputClass}
+              value={fromEmail}
+              onChange={(e) => setFromEmail(e.target.value)}
+              placeholder={email || 'mail@example.com'}
+            />
+          </Field>
           <Field label="From name" htmlFor="fromName" hint="Display name on delivered emails, e.g. “Website contact form”.">
             <input
               id="fromName"
