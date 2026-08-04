@@ -12,7 +12,8 @@
     "dev:web": "npm run dev --prefix web",
     "build": "npm run build --prefix web && tsc -p tsconfig.json",
     "start": "node dist/index.js",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "tsx --test src/*.test.ts"
   },
   "dependencies": {
     "@fastify/cookie": "^9.4.0",

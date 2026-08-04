@@ -16,9 +16,10 @@ interface Props {
   submitLabel: string;
   onSubmit: (input: FormInput) => Promise<void>;
   onCancel?: () => void;
+  turnstileConfigured?: boolean;
 }
 
-export default function FormEditor({ initial, submitLabel, onSubmit, onCancel }: Props) {
+export default function FormEditor({ initial, submitLabel, onSubmit, onCancel, turnstileConfigured }: Props) {
   const isEdit = Boolean(initial);
   const [name, setName] = useState(initial?.name ?? '');
   const [slug, setSlug] = useState(initial?.slug ?? '');
@@ -33,6 +34,9 @@ export default function FormEditor({ initial, submitLabel, onSubmit, onCancel }:
   const [subject, setSubject] = useState(initial?.subject_template ?? 'New submission from {{form}}');
   const [origins, setOrigins] = useState<string[]>(initial?.allowed_origins ?? []);
   const [redirect, setRedirect] = useState(initial?.redirect_url ?? '');
+  const configured = initial?.turnstile_configured ?? turnstileConfigured ?? false;
+  const [turnstileEnabled, setTurnstileEnabled] = useState(initial?.turnstile_enabled ?? configured);
+  const [spamThreshold, setSpamThreshold] = useState(initial?.spam_score_threshold ?? 5);
   const [enabled, setEnabled] = useState(initial?.enabled ?? true);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -56,6 +60,8 @@ export default function FormEditor({ initial, submitLabel, onSubmit, onCancel }:
         allowed_origins: origins,
         redirect_url: redirect.trim(),
         enabled,
+        turnstile_enabled: turnstileEnabled,
+        spam_score_threshold: spamThreshold,
       });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not save form.');
@@ -140,6 +146,41 @@ export default function FormEditor({ initial, submitLabel, onSubmit, onCancel }:
           value={redirect}
           onChange={(e) => setRedirect(e.target.value)}
           placeholder="https://allenpilares.com/thanks"
+        />
+      </Field>
+
+      <div className="rounded-md border border-gray-200 p-4 dark:border-gray-700">
+        <label className="flex items-center gap-2.5">
+          <input
+            type="checkbox"
+            checked={turnstileEnabled}
+            disabled={!configured && !turnstileEnabled}
+            onChange={(e) => setTurnstileEnabled(e.target.checked)}
+            className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-600 disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800"
+          />
+          <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Require Cloudflare Turnstile</span>
+        </label>
+        <p className="mt-1.5 pl-6 text-xs text-gray-500 dark:text-gray-400">
+          {configured
+            ? 'Blocks submissions unless Cloudflare validates a single-use challenge token.'
+            : 'Set TURNSTILE_SITE_KEY and TURNSTILE_SECRET_KEY on the server to enable this.'}
+        </p>
+      </div>
+
+      <Field
+        label="Spam score threshold"
+        htmlFor="spamThreshold"
+        hint="1 is strict; 20 is permissive. The recommended default is 5."
+      >
+        <input
+          id="spamThreshold"
+          type="number"
+          min={1}
+          max={20}
+          className={inputClass}
+          value={spamThreshold}
+          onChange={(e) => setSpamThreshold(Number(e.target.value))}
+          required
         />
       </Field>
 

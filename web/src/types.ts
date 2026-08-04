@@ -2,6 +2,7 @@ export interface Me {
   authenticated: boolean;
   defaultPassword?: boolean;
   smtpConfigured?: boolean;
+  turnstileConfigured?: boolean;
 }
 
 export interface Form {
@@ -17,6 +18,10 @@ export interface Form {
   enabled: boolean;
   created_at: string;
   endpoint: string;
+  turnstile_enabled: boolean;
+  turnstile_configured: boolean;
+  turnstile_site_key: string | null;
+  spam_score_threshold: number;
 }
 
 export interface FormInput {
@@ -27,6 +32,8 @@ export interface FormInput {
   allowed_origins?: string[];
   redirect_url?: string;
   enabled?: boolean;
+  turnstile_enabled?: boolean;
+  spam_score_threshold?: number;
 }
 
 export interface Settings {
@@ -41,6 +48,12 @@ export interface Settings {
 
 export type SubmissionStatus = 'sent' | 'failed' | 'spam' | 'rate_limited';
 
+export interface SpamReason {
+  code: string;
+  points: number;
+  detail: string;
+}
+
 export interface Submission {
   id: string;
   form_id: string;
@@ -50,6 +63,9 @@ export interface Submission {
   error: string | null;
   message_id: string | null;
   ip: string | null;
+  spam_score: number;
+  spam_reasons: SpamReason[];
+  turnstile_status: string | null;
   created_at: string;
 }
 

@@ -46,9 +46,13 @@ interface FormPublic {
   enabled: boolean;
   created_at: string;
   endpoint: string;
+  turnstile_enabled: boolean;
+  turnstile_configured: boolean;
+  turnstile_site_key: string | null;
+  spam_score_threshold: number;
 }
 
-function toFormPublic(form: FormRow, baseUrl: string): FormPublic {
+function toFormPublic(form: FormRow, baseUrl: string, turnstileSiteKey?: string): FormPublic {
   const destinationEmails = getDestinationEmails(form);
   let origins: string[] = [];
   try {
@@ -69,6 +73,10 @@ function toFormPublic(form: FormRow, baseUrl: string): FormPublic {
     enabled: form.enabled === 1,
     created_at: form.created_at,
     endpoint: `${baseUrl.replace(/\/$/, '')}/api/v1/forms/${form.slug}`,
+    turnstile_enabled: form.turnstile_enabled === 1,
+    turnstile_configured: Boolean(turnstileSiteKey),
+    turnstile_site_key: form.turnstile_enabled === 1 ? turnstileSiteKey ?? null : null,
+    spam_score_threshold: form.spam_score_threshold,
   };
 }
 
@@ -115,6 +123,7 @@ export const adminRoutes: FastifyPluginAsync<PluginOpts> = async (app: FastifyIn
       authenticated: true,
       defaultPassword: config.isDefaultPassword,
       smtpConfigured: smtpConfigured(readSettings(db)),
+      turnstileConfigured: Boolean(config.turnstileSecretKey),
     };
   });
 
@@ -182,7 +191,7 @@ export const adminRoutes: FastifyPluginAsync<PluginOpts> = async (app: FastifyIn
 
   app.get('/api/admin/forms', async () => {
     const rows = db.prepare('SELECT * FROM forms ORDER BY created_at DESC').all() as FormRow[];
-    return { forms: rows.map((r) => toFormPublic(r, config.baseUrl)) };
+    return { forms: rows.map((r) => toFormPublic(r, config.baseUrl, config.turnstileSiteKey)) };
   });
 
   const emailSchema = z.string().trim().email();
@@ -196,6 +205,8 @@ export const adminRoutes: FastifyPluginAsync<PluginOpts> = async (app: FastifyIn
     allowed_origins: z.array(z.string()).max(50).optional(),
     redirect_url: z.string().url().optional().or(z.literal('')),
     enabled: z.boolean().optional(),
+    turnstile_enabled: z.boolean().optional(),
+    spam_score_threshold: z.number().int().min(1).max(20).optional(),
   };
   const formInput = z.object(formFields).refine((body) => body.destination_emails || body.destination_email, {
     message: 'Provide at least one destination email.',
@@ -228,11 +239,17 @@ export const adminRoutes: FastifyPluginAsync<PluginOpts> = async (app: FastifyIn
     }
 
     const destinations = normalizeDestinations(b.destination_emails ?? [b.destination_email!]);
+    const turnstileEnabled = b.turnstile_enabled ?? Boolean(config.turnstileSecretKey);
+    if (turnstileEnabled && !config.turnstileSecretKey) {
+      return reply.code(400).send({ ok: false, error: 'Configure Turnstile environment keys before enabling it.' });
+    }
     const key = generateApiKey();
     const id = nanoid(12);
     db.prepare(
-      `INSERT INTO forms (id, name, slug, destination_email, destination_emails, subject_template, allowed_origins, redirect_url, api_key_hash, api_key_prefix, enabled)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO forms
+         (id, name, slug, destination_email, destination_emails, subject_template, allowed_origins, redirect_url,
+          api_key_hash, api_key_prefix, enabled, turnstile_enabled, spam_score_threshold)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       id,
       b.name,
@@ -245,17 +262,19 @@ export const adminRoutes: FastifyPluginAsync<PluginOpts> = async (app: FastifyIn
       key.hash,
       key.prefix,
       b.enabled === false ? 0 : 1,
+      turnstileEnabled ? 1 : 0,
+      b.spam_score_threshold ?? 5,
     );
 
     const form = getForm(db, id)!;
-    return reply.code(201).send({ form: toFormPublic(form, config.baseUrl), api_key: key.key });
+    return reply.code(201).send({ form: toFormPublic(form, config.baseUrl, config.turnstileSiteKey), api_key: key.key });
   });
 
   app.get('/api/admin/forms/:id', async (request, reply) => {
     const { id } = request.params as { id: string };
     const form = getForm(db, id);
     if (!form) return reply.code(404).send({ ok: false, error: 'Form not found.' });
-    return { form: toFormPublic(form, config.baseUrl) };
+    return { form: toFormPublic(form, config.baseUrl, config.turnstileSiteKey) };
   });
 
   app.patch('/api/admin/forms/:id', async (request, reply) => {
@@ -268,6 +287,9 @@ export const adminRoutes: FastifyPluginAsync<PluginOpts> = async (app: FastifyIn
       return reply.code(400).send({ ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid form.' });
     }
     const b = parsed.data;
+    if (b.turnstile_enabled === true && form.turnstile_enabled !== 1 && !config.turnstileSecretKey) {
+      return reply.code(400).send({ ok: false, error: 'Configure Turnstile environment keys before enabling it.' });
+    }
 
     let slug = form.slug;
     if (b.slug !== undefined) {
@@ -289,7 +311,7 @@ export const adminRoutes: FastifyPluginAsync<PluginOpts> = async (app: FastifyIn
     db.prepare(
       `UPDATE forms SET
          name = ?, slug = ?, destination_email = ?, destination_emails = ?, subject_template = ?,
-         allowed_origins = ?, redirect_url = ?, enabled = ?
+         allowed_origins = ?, redirect_url = ?, enabled = ?, turnstile_enabled = ?, spam_score_threshold = ?
        WHERE id = ?`,
     ).run(
       b.name ?? form.name,
@@ -300,10 +322,12 @@ export const adminRoutes: FastifyPluginAsync<PluginOpts> = async (app: FastifyIn
       b.allowed_origins !== undefined ? JSON.stringify(b.allowed_origins) : form.allowed_origins,
       b.redirect_url !== undefined ? (b.redirect_url.length > 0 ? b.redirect_url : null) : form.redirect_url,
       b.enabled !== undefined ? (b.enabled ? 1 : 0) : form.enabled,
+      b.turnstile_enabled !== undefined ? (b.turnstile_enabled ? 1 : 0) : form.turnstile_enabled,
+      b.spam_score_threshold ?? form.spam_score_threshold,
       id,
     );
 
-    return { form: toFormPublic(getForm(db, id)!, config.baseUrl) };
+    return { form: toFormPublic(getForm(db, id)!, config.baseUrl, config.turnstileSiteKey) };
   });
 
   app.delete('/api/admin/forms/:id', async (request, reply) => {
@@ -354,6 +378,7 @@ export const adminRoutes: FastifyPluginAsync<PluginOpts> = async (app: FastifyIn
     const submissions = rows.map((r) => ({
       ...r,
       payload: safeParse(r.payload),
+      spam_reasons: safeParse(r.spam_reasons),
     }));
 
     return { submissions, page, pageSize: PAGE_SIZE, total, totalPages: Math.max(1, Math.ceil(total / PAGE_SIZE)) };

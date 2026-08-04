@@ -81,6 +81,7 @@ export default function Logs() {
                   <th className="px-5 py-2.5 w-8"></th>
                   <th className="px-5 py-2.5">Form</th>
                   <th className="px-5 py-2.5">Status</th>
+                  <th className="px-5 py-2.5">Score</th>
                   <th className="px-5 py-2.5">Reply-to</th>
                   <th className="px-5 py-2.5">IP</th>
                   <th className="px-5 py-2.5">When</th>
@@ -102,13 +103,14 @@ export default function Logs() {
                       <td className="px-5 py-3">
                         <StatusBadge status={s.status} />
                       </td>
+                      <td className="px-5 py-3 font-mono text-xs text-gray-500 dark:text-gray-400">{s.spam_score}</td>
                       <td className="px-5 py-3 text-gray-500 dark:text-gray-400">{s.reply_to ?? '—'}</td>
                       <td className="px-5 py-3 font-mono text-xs text-gray-500 dark:text-gray-400">{s.ip ?? '—'}</td>
                       <td className="px-5 py-3 text-gray-500 dark:text-gray-400">{formatDate(s.created_at)}</td>
                     </tr>
                     {expanded === s.id && (
                       <tr className="bg-gray-50 dark:bg-gray-800/40">
-                        <td colSpan={6} className="px-5 py-4">
+                        <td colSpan={7} className="px-5 py-4">
                           <ExpandedRow submission={s} />
                         </td>
                       </tr>
@@ -148,6 +150,23 @@ function ExpandedRow({ submission }: { submission: Submission }) {
       {submission.error && (
         <div className="rounded-md bg-red-50 p-3 text-sm text-red-700 ring-1 ring-inset ring-red-600/20 dark:bg-red-500/10 dark:text-red-400 dark:ring-red-500/20">
           <span className="font-semibold">Error:</span> {submission.error}
+        </div>
+      )}
+      <div className="flex flex-wrap gap-x-5 gap-y-1 text-xs text-gray-500 dark:text-gray-400">
+        <span>Spam score: <strong className="text-gray-700 dark:text-gray-200">{submission.spam_score}</strong></span>
+        <span>Turnstile: <strong className="text-gray-700 dark:text-gray-200">{submission.turnstile_status ?? 'not recorded'}</strong></span>
+      </div>
+      {submission.spam_reasons.length > 0 && (
+        <div>
+          <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Scoring signals</p>
+          <ul className="space-y-1 text-sm text-gray-700 dark:text-gray-300">
+            {submission.spam_reasons.map((reason, index) => (
+              <li key={`${reason.code}-${index}`}>
+                <span className="font-mono text-xs text-amber-700 dark:text-amber-400">+{reason.points}</span>{' '}
+                {reason.detail}
+              </li>
+            ))}
+          </ul>
         </div>
       )}
       <div>

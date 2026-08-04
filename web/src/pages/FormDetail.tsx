@@ -116,6 +116,8 @@ export default function FormDetail() {
             value={form.allowed_origins.length ? form.allowed_origins.join(', ') : 'Any (no allowlist)'}
           />
           <Detail label="Redirect URL" value={form.redirect_url ?? '—'} />
+          <Detail label="Turnstile" value={form.turnstile_enabled ? 'Required' : 'Off'} />
+          <Detail label="Spam threshold" value={`${form.spam_score_threshold} points`} />
           <Detail label="Status" value={form.enabled ? 'Enabled' : 'Disabled'} />
         </dl>
       </Card>
@@ -142,11 +144,11 @@ export default function FormDetail() {
       <Card className="p-5">
         <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Integration snippets</h2>
         <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-          Point your contact form at the endpoint above. No API key is needed for browser submissions.
+          Point your contact form at the endpoint above. Spam scoring is automatic; use the Turnstile markup exactly as shown when enabled.
         </p>
         <div className="mt-4 space-y-5">
-          <Snippet title="Plain HTML form" code={htmlSnippet(endpoint)} />
-          <Snippet title="JavaScript (fetch)" code={fetchSnippet(endpoint)} />
+          <Snippet title="Plain HTML form" code={htmlSnippet(endpoint, form)} />
+          <Snippet title="JavaScript (fetch)" code={fetchSnippet(endpoint, form)} />
         </div>
       </Card>
 
@@ -235,29 +237,53 @@ function Snippet({ title, code }: { title: string; code: string }) {
   );
 }
 
-function htmlSnippet(endpoint: string): string {
+function htmlSnippet(endpoint: string, form: Form): string {
+  const turnstile =
+    form.turnstile_enabled && form.turnstile_site_key
+      ? `  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+  <div class="cf-turnstile" data-sitekey="${form.turnstile_site_key}" data-action="resender_form"></div>
+  <input type="hidden" name="_form_started_at" id="resender-form-started-at" />
+  <script>document.getElementById("resender-form-started-at").value = String(Date.now());</script>
+`
+      : '';
   return `<form action="${endpoint}" method="POST">
   <input type="text" name="name" placeholder="Your name" required />
   <input type="email" name="email" placeholder="Your email" required />
   <textarea name="message" placeholder="Message" required></textarea>
   <!-- Honeypot: leave empty. Bots that fill it are silently dropped. -->
   <input type="text" name="_gotcha" style="display:none" tabindex="-1" autocomplete="off" />
-  <button type="submit">Send</button>
+${turnstile}  <button type="submit">Send</button>
 </form>`;
 }
 
-function fetchSnippet(endpoint: string): string {
-  return `const res = await fetch("${endpoint}", {
+function fetchSnippet(endpoint: string, form: Form): string {
+  const turnstileSetup =
+    form.turnstile_enabled && form.turnstile_site_key
+      ? `// In your form markup:
+// <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+// <div class="cf-turnstile" data-sitekey="${form.turnstile_site_key}" data-action="resender_form"></div>
+const formStartedAt = Date.now();
+
+`
+      : '';
+  const turnstileFields = form.turnstile_enabled
+    ? `
+    "cf-turnstile-response": turnstile.getResponse(),
+    _form_started_at: String(formStartedAt),`
+    : '';
+  return `${turnstileSetup}const res = await fetch("${endpoint}", {
   method: "POST",
   headers: { "Content-Type": "application/json" },
   body: JSON.stringify({
     name: "Ada Lovelace",
     email: "ada@example.com",
-    message: "Hello!",
+    message: "Hello!",${turnstileFields}
   }),
 });
 const data = await res.json();
 if (data.ok) {
   // submission accepted
+} else if (window.turnstile) {
+  turnstile.reset();
 }`;
 }

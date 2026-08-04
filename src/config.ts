@@ -10,6 +10,8 @@ export interface Config {
   sessionSecret: string;
   baseUrl: string;
   trustProxy: boolean;
+  turnstileSiteKey?: string;
+  turnstileSecretKey?: string;
   dbPath: string;
 }
 
@@ -47,6 +49,11 @@ export function loadConfig(): Config {
   mkdirSync(dataDir, { recursive: true });
 
   const adminPassword = process.env.ADMIN_PASSWORD ?? DEFAULT_PASSWORD;
+  const turnstileSiteKey = process.env.TURNSTILE_SITE_KEY?.trim() || undefined;
+  const turnstileSecretKey = process.env.TURNSTILE_SECRET_KEY?.trim() || undefined;
+  if (Boolean(turnstileSiteKey) !== Boolean(turnstileSecretKey)) {
+    throw new Error('TURNSTILE_SITE_KEY and TURNSTILE_SECRET_KEY must be configured together.');
+  }
 
   return {
     port: Number(process.env.PORT ?? 3000),
@@ -56,6 +63,8 @@ export function loadConfig(): Config {
     sessionSecret: resolveSessionSecret(dataDir),
     baseUrl: process.env.BASE_URL ?? 'http://localhost:3000',
     trustProxy: parseBool(process.env.TRUST_PROXY, false),
+    turnstileSiteKey,
+    turnstileSecretKey,
     dbPath: join(dataDir, 'resender.db'),
   };
 }

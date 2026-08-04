@@ -15,8 +15,8 @@ provider auto-detection) was inspired by the `references/maildrop` library inclu
   thank-you page or your own URL.
 - **JSON API for SPAs** — post `application/json` and get `{ "ok": true, "id": "…" }` back.
 - **Programmatic send** — a Resend-style `POST /api/v1/send` with a Bearer API key.
-- **Safe by default** — per-form API keys (stored hashed), origin allowlist, honeypot field,
-  in-memory rate limiting, and recipients locked to configured destinations (never an open relay).
+- **Layered spam protection** — Cloudflare Turnstile, weighted spam scoring, duplicate/burst
+  detection, origin allowlists, honeypots, and rate limiting with explainable decisions in logs.
 - **Admin UI** — connect Gmail, create forms, copy ready-made snippets, and browse submission logs.
 - **Single container** — one port, one SQLite file on a mounted volume.
 
@@ -54,6 +54,23 @@ All configuration is via environment variables (see `.env.example`):
 | `SESSION_SECRET` | auto | If unset, generated once and persisted to `$DATA_DIR/secret`. |
 | `BASE_URL` | `http://localhost:3000` | Used to render endpoint URLs/snippets in the UI. |
 | `TRUST_PROXY` | `false` | Set `true` behind a reverse proxy so client IPs are correct. |
+| `TURNSTILE_SITE_KEY` | unset | Public widget key; set together with the secret key. |
+| `TURNSTILE_SECRET_KEY` | unset | Server-only Siteverify secret; never expose it in site code. |
+
+### Turnstile and spam scoring
+
+1. Create a [Cloudflare Turnstile widget](https://developers.cloudflare.com/turnstile/get-started/)
+   and allow every hostname where the contact form is embedded.
+2. Set both `TURNSTILE_SITE_KEY` and `TURNSTILE_SECRET_KEY`, then restart resender.
+3. Enable **Require Cloudflare Turnstile** on existing forms and replace their integrations with
+   the newly generated snippet. New forms default to Turnstile-on when the keys are configured.
+
+Resender validates every token server-side, checks the fixed `resender_form` action and request
+hostname, and fails closed when verification is invalid or unavailable. After a valid challenge,
+a weighted score still checks URL density, shorteners, active HTML, solicitation language,
+disposable email providers, invisible text, submission speed, exact duplicates, and sender/IP
+bursts. The default blocking threshold is 5 points; each form can set 1 (strict) through 20
+(permissive). Scores and reasons are visible in **Logs**.
 
 **SMTP credentials are not environment variables.** They are entered in the admin UI (Settings)
 and stored in the SQLite `settings` table. This is a deliberate trade-off for a single-user tool
@@ -98,15 +115,18 @@ _Add screenshots of the admin UI here._
 
 Create a form in the admin UI first. It gets a **slug** (e.g. `allenpilares-contact`); the public
 endpoint is `POST {BASE_URL}/api/v1/forms/{slug}`. No API key is needed for this endpoint —
-protection is the origin allowlist, honeypot, and rate limit.
+protection can include Turnstile, origin checks, a honeypot, rate limits, and weighted spam scoring.
 
 Reserved field names:
 
 - `_gotcha` — honeypot. Keep it hidden from real users; if a bot fills it, the submission is
   recorded as spam and a fake success is returned. Not included in the delivered email.
 - `_subject` — overrides the subject where the form's template contains `{{subject}}`.
-- `_replyto` — the reply-to address. If absent, a field named `email` is used instead (when it is a
-  valid address). `_gotcha`, `_subject`, and `_replyto` are stripped from the delivered email.
+- `_replyto` — the reply-to address. If absent, a valid field named `email` is used instead.
+- `cf-turnstile-response` — the single-use widget token, generated automatically by Turnstile.
+- `_form_started_at` — optional browser timestamp used as one low-weight scoring signal.
+
+All reserved fields are stripped from delivered emails, and CAPTCHA tokens are never stored.
 
 ### Plain HTML form (no JavaScript)
 
@@ -243,6 +263,10 @@ With either proxy in front, set `TRUST_PROXY=true` in resender's environment.
 - **Origin allowlist.** Per form, list the domains allowed to post. When the list is non-empty, the
   request's `Origin`/`Referer` host must match or it's rejected with `403`. An empty list allows any
   origin (fine for public contact forms; the UI warns about it).
+- **Turnstile.** Enabled forms require server-side Siteverify validation. The action and originating
+  hostname are checked, and token/API failures fail closed.
+- **Weighted spam scoring.** Explainable content, identity, timing, duplicate, and burst signals are
+  combined per form. Scores at or above the configured threshold are logged as `spam` and not sent.
 - **Honeypot.** The reserved `_gotcha` field traps bots: a non-empty value records the submission as
   `spam` and returns a fake success, without sending mail.
 - **Rate limiting.** In-memory sliding window, default **5 requests per minute per IP per form**.
@@ -251,7 +275,8 @@ With either proxy in front, set `TRUST_PROXY=true` in resender's environment.
 - **API keys hashed.** Keys are `rsk_` + 32 random chars, shown once, and stored only as a SHA-256
   hash plus an 8-character prefix for display. Lost keys are regenerated, not recovered.
 - **Payload limits.** Max 50 fields per submission, each string value up to 10 KB, 1 MB total body.
-  File uploads are accepted by multipart parsing but discarded (fields only in v1).
+  File uploads are accepted by multipart parsing but discarded (fields only in v1). CAPTCHA
+  tokens and other reserved control fields are stripped before logging or delivery.
 - **Admin session.** Single admin password (constant-time compare, 1s delay on failure). The session
   is an HMAC-signed, HTTP-only cookie (7-day expiry); no session table.
 

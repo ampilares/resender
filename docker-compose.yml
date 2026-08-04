@@ -22,6 +22,12 @@ services:
       # rate limiting and logs) are read from X-Forwarded-For.
       # TRUST_PROXY: "true"
       #
+      # Optional, strongly recommended spam protection. Configure a Turnstile
+      # widget for the websites that host your forms. Set both values together
+      # in .env; empty defaults leave the feature disabled.
+      TURNSTILE_SITE_KEY: "${TURNSTILE_SITE_KEY:-}"
+      TURNSTILE_SECRET_KEY: "${TURNSTILE_SECRET_KEY:-}"
+      #
       # Optional overrides (sensible defaults shown):
       # PORT: "3000"
       # DATA_DIR: "/data"

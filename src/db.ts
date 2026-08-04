@@ -14,6 +14,8 @@ export interface FormRow {
   api_key_hash: string;
   api_key_prefix: string;
   enabled: number;
+  turnstile_enabled: number;
+  spam_score_threshold: number;
   created_at: string;
 }
 
@@ -26,6 +28,10 @@ export interface SubmissionRow {
   error: string | null;
   message_id: string | null;
   ip: string | null;
+  spam_score: number;
+  spam_reasons: string;
+  turnstile_status: string | null;
+  content_hash: string | null;
   created_at: string;
 }
 
@@ -90,6 +96,23 @@ const MIGRATIONS: Migration[] = [
       for (const row of rows) {
         update.run(JSON.stringify([row.destination_email]), row.id);
       }
+    },
+  },
+  {
+    version: 3,
+    name: 'turnstile and spam scoring',
+    up(db) {
+      // Existing forms remain compatible until Turnstile is explicitly enabled.
+      db.exec(`
+        ALTER TABLE forms ADD COLUMN turnstile_enabled INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE forms ADD COLUMN spam_score_threshold INTEGER NOT NULL DEFAULT 5;
+        ALTER TABLE submissions ADD COLUMN spam_score INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE submissions ADD COLUMN spam_reasons TEXT NOT NULL DEFAULT '[]';
+        ALTER TABLE submissions ADD COLUMN turnstile_status TEXT;
+        ALTER TABLE submissions ADD COLUMN content_hash TEXT;
+        CREATE INDEX idx_submissions_content_hash_created
+          ON submissions(form_id, content_hash, created_at DESC);
+      `);
     },
   },
 ];

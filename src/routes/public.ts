@@ -7,6 +7,8 @@ import { getDestinationEmails, type DB, type FormRow } from '../db.js';
 import { hashApiKey } from '../auth.js';
 import { readSettings, sendEmail } from '../mailer.js';
 import { renderSubmission } from '../emailTemplate.js';
+import { scoreSubmission, submissionFingerprint, type SpamHistory, type SpamReason } from '../spamScoring.js';
+import { verifyTurnstile } from '../turnstile.js';
 
 const MAX_FIELDS = 50;
 const MAX_VALUE_BYTES = 10 * 1024;
@@ -25,13 +27,18 @@ interface LogArgs {
   error?: string | null;
   messageId?: string | null;
   ip?: string | null;
+  spamScore?: number;
+  spamReasons?: SpamReason[];
+  turnstileStatus?: string | null;
+  contentHash?: string | null;
 }
 
 function logSubmission(db: DB, args: LogArgs): string {
   const id = nanoid();
   db.prepare(
-    `INSERT INTO submissions (id, form_id, payload, reply_to, status, error, message_id, ip)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO submissions
+       (id, form_id, payload, reply_to, status, error, message_id, ip, spam_score, spam_reasons, turnstile_status, content_hash)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     id,
     args.formId,
@@ -41,6 +48,10 @@ function logSubmission(db: DB, args: LogArgs): string {
     args.error ?? null,
     args.messageId ?? null,
     args.ip ?? null,
+    args.spamScore ?? 0,
+    JSON.stringify(args.spamReasons ?? []),
+    args.turnstileStatus ?? null,
+    args.contentHash ?? null,
   );
   return id;
 }
@@ -62,6 +73,46 @@ function hostOf(value: string | undefined): string | null {
   } catch {
     return null;
   }
+}
+
+function hostnameOf(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  try {
+    return new URL(value).hostname.toLowerCase();
+  } catch {
+    return undefined;
+  }
+}
+
+function getSpamHistory(db: DB, formId: string, ip: string, replyTo: string | undefined, fingerprint: string): SpamHistory {
+  const duplicate = db
+    .prepare(
+      `SELECT ip FROM submissions
+       WHERE form_id = ? AND content_hash = ? AND created_at >= datetime('now', '-1 day')
+       ORDER BY created_at DESC LIMIT 1`,
+    )
+    .get(formId, fingerprint) as { ip: string | null } | undefined;
+  const recentFromIp = (
+    db
+      .prepare(`SELECT COUNT(*) AS n FROM submissions WHERE form_id = ? AND ip = ? AND created_at >= datetime('now', '-1 day')`)
+      .get(formId, ip) as { n: number }
+  ).n;
+  const recentFromSender = replyTo
+    ? (
+        db
+          .prepare(
+            `SELECT COUNT(*) AS n FROM submissions
+             WHERE form_id = ? AND lower(reply_to) = lower(?) AND created_at >= datetime('now', '-1 hour')`,
+          )
+          .get(formId, replyTo) as { n: number }
+      ).n
+    : 0;
+  return {
+    duplicateFromIp: duplicate?.ip === ip,
+    duplicateAcrossIps: Boolean(duplicate && duplicate.ip !== ip),
+    recentFromIp,
+    recentFromSender,
+  };
 }
 
 /** Enforce the origin allowlist. Empty allowlist = allow all. */
@@ -174,10 +225,45 @@ export const publicRoutes: FastifyPluginAsync<PluginOpts> = async (app: FastifyI
     const rawFields = collected.fields;
     const ip = request.ip;
 
+    // Extract control fields early so CAPTCHA tokens and timing metadata are
+    // never persisted in logs or forwarded by email.
+    const subjectOverride = typeof rawFields['_subject'] === 'string' ? rawFields['_subject'] : undefined;
+    const replyToRaw =
+      (typeof rawFields['_replyto'] === 'string' ? rawFields['_replyto'] : undefined) ??
+      (typeof rawFields['email'] === 'string' ? rawFields['email'] : undefined);
+    const replyTo = replyToRaw && EMAIL_RE.test(replyToRaw.trim()) ? replyToRaw.trim() : undefined;
+    const turnstileToken =
+      typeof rawFields['cf-turnstile-response'] === 'string' ? rawFields['cf-turnstile-response'] : undefined;
+    const formStartedAt = typeof rawFields['_form_started_at'] === 'string' ? rawFields['_form_started_at'] : undefined;
+
+    const reservedFields = new Set([
+      '_gotcha',
+      '_subject',
+      '_replyto',
+      '_form_started_at',
+      'cf-turnstile-response',
+      'g-recaptcha-response',
+      'h-captcha-response',
+    ]);
+    const payload: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(rawFields)) {
+      if (!reservedFields.has(key)) payload[key] = value;
+    }
+
     // Honeypot: if _gotcha is filled, silently record spam and fake success.
     const gotcha = rawFields['_gotcha'];
     if (typeof gotcha === 'string' && gotcha.trim().length > 0) {
-      logSubmission(db, { formId: form.id, payload: rawFields, status: 'spam', ip });
+      logSubmission(db, {
+        formId: form.id,
+        payload,
+        replyTo,
+        status: 'spam',
+        ip,
+        spamScore: 100,
+        spamReasons: [{ code: 'honeypot', points: 100, detail: 'Honeypot field was filled' }],
+        turnstileStatus: 'not_checked',
+        contentHash: submissionFingerprint(payload),
+      });
       return respondSuccess(reply, form.redirect_url, wantsJson, nanoid());
     }
 
@@ -186,26 +272,85 @@ export const publicRoutes: FastifyPluginAsync<PluginOpts> = async (app: FastifyI
     }
 
     if (!limiter.check(`${form.id}:${ip}`)) {
-      logSubmission(db, { formId: form.id, payload: rawFields, status: 'rate_limited', ip });
+      logSubmission(db, { formId: form.id, payload, replyTo, status: 'rate_limited', ip });
       return reply.code(429).send({ ok: false, error: 'Too many requests. Try again shortly.' });
-    }
-
-    // Extract reserved control fields, then build the delivered payload.
-    const subjectOverride = typeof rawFields['_subject'] === 'string' ? (rawFields['_subject'] as string) : undefined;
-    const replyToRaw =
-      (typeof rawFields['_replyto'] === 'string' ? (rawFields['_replyto'] as string) : undefined) ??
-      (typeof rawFields['email'] === 'string' ? (rawFields['email'] as string) : undefined);
-    const replyTo = replyToRaw && EMAIL_RE.test(replyToRaw.trim()) ? replyToRaw.trim() : undefined;
-
-    const payload: Record<string, unknown> = {};
-    for (const [key, value] of Object.entries(rawFields)) {
-      if (key === '_gotcha' || key === '_subject' || key === '_replyto') continue;
-      payload[key] = value;
     }
 
     const validationError = validateFields(payload);
     if (validationError) {
       return reply.code(400).send({ ok: false, error: validationError });
+    }
+
+    let turnstileStatus = 'disabled';
+    if (form.turnstile_enabled === 1) {
+      if (!opts.ctx.config.turnstileSecretKey) {
+        logSubmission(db, {
+          formId: form.id,
+          payload,
+          replyTo,
+          status: 'failed',
+          error: 'Turnstile is enabled for this form but server keys are not configured.',
+          ip,
+          turnstileStatus: 'misconfigured',
+        });
+        return reply.code(503).send({ ok: false, error: 'Human verification is temporarily unavailable.' });
+      }
+
+      const expectedHostname =
+        hostnameOf(request.headers.origin) ?? hostnameOf(request.headers.referer as string | undefined);
+      const verification = await verifyTurnstile({
+        secretKey: opts.ctx.config.turnstileSecretKey,
+        token: turnstileToken,
+        remoteIp: ip,
+        expectedHostname,
+        expectedAction: 'resender_form',
+      });
+      if (!verification.success) {
+        turnstileStatus = verification.unavailable ? 'unavailable' : 'failed';
+        const detail = verification.errors.join(', ') || 'unknown validation error';
+        logSubmission(db, {
+          formId: form.id,
+          payload,
+          replyTo,
+          status: verification.unavailable ? 'failed' : 'spam',
+          error: verification.unavailable ? 'Turnstile Siteverify unavailable.' : null,
+          ip,
+          spamScore: verification.unavailable ? 0 : 100,
+          spamReasons: [{ code: 'turnstile_failed', points: verification.unavailable ? 0 : 100, detail }],
+          turnstileStatus,
+          contentHash: submissionFingerprint(payload),
+        });
+        if (verification.unavailable) {
+          app.log.warn({ errors: verification.errors, form: form.slug }, 'turnstile verification unavailable');
+          return reply.code(503).send({ ok: false, error: 'Human verification is temporarily unavailable.' });
+        }
+        return reply.code(400).send({ ok: false, error: 'Human verification failed. Please try again.' });
+      }
+      turnstileStatus = 'passed';
+    }
+
+    const fingerprint = submissionFingerprint(payload);
+    const history = getSpamHistory(db, form.id, ip, replyTo, fingerprint);
+    const spam = scoreSubmission({
+      fields: payload,
+      replyTo,
+      userAgent: request.headers['user-agent'],
+      formStartedAt,
+      history,
+    });
+    if (spam.score >= form.spam_score_threshold) {
+      logSubmission(db, {
+        formId: form.id,
+        payload,
+        replyTo,
+        status: 'spam',
+        ip,
+        spamScore: spam.score,
+        spamReasons: spam.reasons,
+        turnstileStatus,
+        contentHash: spam.fingerprint,
+      });
+      return respondSuccess(reply, form.redirect_url, wantsJson, nanoid());
     }
 
     const settings = readSettings(db);
@@ -221,7 +366,18 @@ export const publicRoutes: FastifyPluginAsync<PluginOpts> = async (app: FastifyI
     });
 
     if (result.error) {
-      logSubmission(db, { formId: form.id, payload, replyTo, status: 'failed', error: result.error, ip });
+      logSubmission(db, {
+        formId: form.id,
+        payload,
+        replyTo,
+        status: 'failed',
+        error: result.error,
+        ip,
+        spamScore: spam.score,
+        spamReasons: spam.reasons,
+        turnstileStatus,
+        contentHash: spam.fingerprint,
+      });
       app.log.error({ err: result.error, form: form.slug }, 'form send failed');
       return reply.code(502).send({ ok: false, error: `Email delivery failed: ${result.error}` });
     }
@@ -233,6 +389,10 @@ export const publicRoutes: FastifyPluginAsync<PluginOpts> = async (app: FastifyI
       status: 'sent',
       messageId: result.messageId,
       ip,
+      spamScore: spam.score,
+      spamReasons: spam.reasons,
+      turnstileStatus,
+      contentHash: spam.fingerprint,
     });
     return respondSuccess(reply, form.redirect_url, wantsJson, id);
   });

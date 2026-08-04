@@ -1,12 +1,14 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api';
+import { useAuth } from '../auth';
 import { Button, Card, CopyButton, Modal, PageLoader, StatusBadge } from '../components/ui';
 import FormEditor from '../components/FormEditor';
 import { formatDate } from '../format';
 import type { Form, FormInput } from '../types';
 
 export default function Forms() {
+  const { me } = useAuth();
   const [forms, setForms] = useState<Form[] | null>(null);
   const [creating, setCreating] = useState(false);
   const [newKey, setNewKey] = useState<{ form: Form; key: string } | null>(null);
@@ -87,7 +89,12 @@ export default function Forms() {
       )}
 
       <Modal open={creating} onClose={() => setCreating(false)} title="Create form">
-        <FormEditor submitLabel="Create form" onSubmit={create} onCancel={() => setCreating(false)} />
+        <FormEditor
+          submitLabel="Create form"
+          onSubmit={create}
+          onCancel={() => setCreating(false)}
+          turnstileConfigured={Boolean(me?.turnstileConfigured)}
+        />
       </Modal>
 
       <Modal
