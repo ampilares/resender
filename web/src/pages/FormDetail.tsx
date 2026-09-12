@@ -118,6 +118,7 @@ export default function FormDetail() {
           <Detail label="Redirect URL" value={form.redirect_url ?? '—'} />
           <Detail label="Turnstile" value={form.turnstile_enabled ? 'Required' : 'Off'} />
           <Detail label="Spam threshold" value={`${form.spam_score_threshold} points`} />
+          <Detail label="SMS notification" value={form.sms_enabled && form.sms_number ? `On → ${form.sms_number}` : 'Off'} />
           <Detail label="Status" value={form.enabled ? 'Enabled' : 'Disabled'} />
         </dl>
       </Card>

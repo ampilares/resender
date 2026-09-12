@@ -8,6 +8,7 @@ import Forms from './pages/Forms';
 import FormDetail from './pages/FormDetail';
 import Settings from './pages/Settings';
 import Logs from './pages/Logs';
+import Sms from './pages/Sms';
 
 export default function App() {
   const { me, loading } = useAuth();
@@ -41,6 +42,7 @@ export default function App() {
         <Route path="/forms" element={<Forms />} />
         <Route path="/forms/:id" element={<FormDetail />} />
         <Route path="/logs" element={<Logs />} />
+        <Route path="/sms" element={<Sms />} />
         <Route path="/settings" element={<Settings />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>

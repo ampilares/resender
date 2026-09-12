@@ -9,6 +9,12 @@ export interface Settings {
   smtp_secure?: string;
   from_email?: string;
   from_name?: string;
+  /** Firebase service-account JSON used to push SMS jobs to the phone (write-only in the API). */
+  fcm_service_account?: string;
+  /** Country calling code applied to national-format numbers, e.g. "+61". */
+  sms_default_country_code?: string;
+  /** Maximum rendered SMS length in characters. */
+  sms_max_length?: string;
 }
 
 export interface SmtpConfig {

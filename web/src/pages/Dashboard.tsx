@@ -43,7 +43,13 @@ export default function Dashboard() {
     <div className="space-y-6">
       <h1 className="text-2xl font-semibold tracking-tight text-gray-900 dark:text-gray-100">Dashboard</h1>
 
-      {needsSetup && <SetupChecklist smtpConfigured={me?.smtpConfigured === true} hasForms={(forms?.length ?? 0) > 0} />}
+      {needsSetup && (
+        <SetupChecklist
+          smtpConfigured={me?.smtpConfigured === true}
+          hasForms={(forms?.length ?? 0) > 0}
+          smsConfigured={me?.smsConfigured === true}
+        />
+      )}
 
       {stats && (
         <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
@@ -109,11 +115,20 @@ function StatCard({ label, value, tone }: { label: string; value: number; tone: 
   );
 }
 
-function SetupChecklist({ smtpConfigured, hasForms }: { smtpConfigured: boolean; hasForms: boolean }) {
+function SetupChecklist({
+  smtpConfigured,
+  hasForms,
+  smsConfigured,
+}: {
+  smtpConfigured: boolean;
+  hasForms: boolean;
+  smsConfigured: boolean;
+}) {
   const steps = [
     { done: smtpConfigured, label: 'Connect Gmail', to: '/settings', cta: 'Open settings' },
     { done: hasForms, label: 'Create a form', to: '/forms', cta: 'Create form' },
     { done: false, label: 'Copy the snippet into your site', to: '/forms', cta: 'View forms' },
+    { done: smsConfigured, label: 'Connect a phone for SMS alerts (optional)', to: '/sms', cta: 'Set up SMS' },
   ];
   return (
     <Card className="border-indigo-200 bg-indigo-50/50 p-5 dark:border-indigo-500/30 dark:bg-indigo-500/5">

@@ -9,7 +9,7 @@ export function escapeHtml(value: string): string {
 }
 
 /** Turn an arbitrary field value into a display string. */
-function stringify(value: unknown): string {
+export function stringify(value: unknown): string {
   if (value === null || value === undefined) return '';
   if (typeof value === 'string') return value;
   if (typeof value === 'number' || typeof value === 'boolean') return String(value);
@@ -21,7 +21,7 @@ function stringify(value: unknown): string {
 }
 
 /** Humanize a field key: "first_name" -> "First name". */
-function label(key: string): string {
+export function label(key: string): string {
   const spaced = key.replace(/[_-]+/g, ' ').replace(/([a-z])([A-Z])/g, '$1 $2').trim();
   return spaced.charAt(0).toUpperCase() + spaced.slice(1);
 }

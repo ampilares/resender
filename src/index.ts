@@ -10,6 +10,7 @@ import { openDb, type DB } from './db.js';
 import { RateLimiter } from './rateLimit.js';
 import { publicRoutes } from './routes/public.js';
 import { adminRoutes } from './routes/admin.js';
+import { gatewayRoutes } from './routes/gateway.js';
 
 export interface AppContext {
   db: DB;
@@ -37,6 +38,7 @@ export async function buildServer(config: Config): Promise<FastifyInstance> {
   });
 
   await app.register(publicRoutes, { ctx });
+  await app.register(gatewayRoutes, { ctx });
   await app.register(adminRoutes, { ctx });
 
   await registerStatic(app);

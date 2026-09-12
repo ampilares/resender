@@ -9,6 +9,8 @@ import { readSettings, sendEmail } from '../mailer.js';
 import { renderSubmission } from '../emailTemplate.js';
 import { scoreSubmission, submissionFingerprint, type SpamHistory, type SpamReason } from '../spamScoring.js';
 import { verifyTurnstile } from '../turnstile.js';
+import { getSmsConfig, sendSms, type SendSmsResult } from '../sms/gateway.js';
+import { renderSmsTemplate } from '../sms/template.js';
 
 const MAX_FIELDS = 50;
 const MAX_VALUE_BYTES = 10 * 1024;
@@ -20,6 +22,8 @@ interface PluginOpts {
 type SubmissionStatus = 'sent' | 'failed' | 'spam' | 'rate_limited';
 
 interface LogArgs {
+  /** Pre-generated id so related rows (e.g. an SMS) can reference the submission. */
+  id?: string;
   formId: string;
   payload: Record<string, unknown>;
   replyTo?: string | null;
@@ -31,14 +35,16 @@ interface LogArgs {
   spamReasons?: SpamReason[];
   turnstileStatus?: string | null;
   contentHash?: string | null;
+  sms?: SendSmsResult;
 }
 
 function logSubmission(db: DB, args: LogArgs): string {
-  const id = nanoid();
+  const id = args.id ?? nanoid();
   db.prepare(
     `INSERT INTO submissions
-       (id, form_id, payload, reply_to, status, error, message_id, ip, spam_score, spam_reasons, turnstile_status, content_hash)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (id, form_id, payload, reply_to, status, error, message_id, ip, spam_score, spam_reasons, turnstile_status, content_hash,
+        sms_status, sms_error, sms_message_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     id,
     args.formId,
@@ -52,8 +58,39 @@ function logSubmission(db: DB, args: LogArgs): string {
     JSON.stringify(args.spamReasons ?? []),
     args.turnstileStatus ?? null,
     args.contentHash ?? null,
+    args.sms?.status ?? null,
+    args.sms?.error ?? null,
+    args.sms?.id ?? null,
   );
   return id;
+}
+
+/**
+ * Send the per-form SMS notification for a submission that passed every
+ * check. Independent of the email outcome: a failure is recorded on the
+ * submission but never changes the HTTP response.
+ */
+async function notifyBySms(
+  app: FastifyInstance,
+  db: DB,
+  form: FormRow,
+  submissionId: string,
+  payload: Record<string, unknown>,
+): Promise<SendSmsResult | undefined> {
+  if (form.sms_enabled !== 1 || !form.sms_number) return undefined;
+  const { maxLength } = getSmsConfig(db);
+  const message = renderSmsTemplate(form.sms_template, { formName: form.name, fields: payload, maxLength });
+  const result = await sendSms(db, {
+    to: form.sms_number,
+    message,
+    formId: form.id,
+    submissionId,
+    deviceId: form.sms_device_id,
+  });
+  if (result.error) {
+    app.log.warn({ err: result.error, form: form.slug }, 'form sms failed');
+  }
+  return result;
 }
 
 function getFormBySlug(db: DB, slug: string): FormRow | undefined {
@@ -365,8 +402,12 @@ export const publicRoutes: FastifyPluginAsync<PluginOpts> = async (app: FastifyI
       replyTo,
     });
 
+    const submissionId = nanoid();
+    const sms = await notifyBySms(app, db, form, submissionId, payload);
+
     if (result.error) {
       logSubmission(db, {
+        id: submissionId,
         formId: form.id,
         payload,
         replyTo,
@@ -377,12 +418,14 @@ export const publicRoutes: FastifyPluginAsync<PluginOpts> = async (app: FastifyI
         spamReasons: spam.reasons,
         turnstileStatus,
         contentHash: spam.fingerprint,
+        sms,
       });
       app.log.error({ err: result.error, form: form.slug }, 'form send failed');
       return reply.code(502).send({ ok: false, error: `Email delivery failed: ${result.error}` });
     }
 
     const id = logSubmission(db, {
+      id: submissionId,
       formId: form.id,
       payload,
       replyTo,
@@ -393,6 +436,7 @@ export const publicRoutes: FastifyPluginAsync<PluginOpts> = async (app: FastifyI
       spamReasons: spam.reasons,
       turnstileStatus,
       contentHash: spam.fingerprint,
+      sms,
     });
     return respondSuccess(reply, form.redirect_url, wantsJson, id);
   });

@@ -191,6 +191,70 @@ in a simple wordmark.
 SPA calls the admin API with `credentials: 'include'`; on 401 redirect to /login.
 In dev, Vite proxies `/api` to `localhost:3000`.
 
+## SMS notifications (embedded Android gateway)
+
+Forms can optionally text one mobile number per accepted submission. resender embeds the backend
+half of the selfhostsim/textbee SMS gateway so the unmodified Android app can be pointed at it
+(API base URL `https://<host>/api/v1/`). No Mongo/Redis/firebase-admin: FCM HTTP v1 is called
+directly with a service-account JWT (`src/sms/fcm.ts`).
+
+### Schema (migration 4)
+
+```sql
+ALTER TABLE forms ADD COLUMN sms_enabled INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE forms ADD COLUMN sms_number TEXT;                 -- E.164, never from the payload
+ALTER TABLE forms ADD COLUMN sms_template TEXT NOT NULL DEFAULT 'New {{form}} submission from {{name}} {{email}} {{phone}}: {{message}}';
+ALTER TABLE forms ADD COLUMN sms_device_id TEXT;             -- NULL = default phone
+ALTER TABLE submissions ADD COLUMN sms_status TEXT;          -- queued|sent|delivered|failed|delivery_failed
+ALTER TABLE submissions ADD COLUMN sms_error TEXT;
+ALTER TABLE submissions ADD COLUMN sms_message_id TEXT;
+CREATE TABLE sms_devices (id, name, api_key_hash UNIQUE, api_key_prefix, fcm_token, brand, manufacturer,
+  model, build_id, os, os_version, app_version_name, app_version_code, enabled, is_default,
+  registered_at, last_seen_at, created_at);
+CREATE TABLE sms_messages (id, device_id → sms_devices ON DELETE SET NULL, direction outbound|inbound,
+  recipient, sender, message, status, error_code, error_message, form_id, submission_id,
+  requested_at, sent_at, delivered_at, failed_at, received_at, created_at);
+```
+
+Settings keys: `fcm_service_account` (validated JSON, write-only), `sms_default_country_code`
+(default `+61`), `sms_max_length` (default 320, 40–1000).
+
+### Gateway API (Android app; `x-api-key: rsd_…` header, or `?apiKey=`)
+
+| Method | Path | Notes |
+|---|---|---|
+| POST | `/api/v1/gateway/devices` | fills in the device row for the key; `201 {success, data:{_id,…}}`; rate limited per IP |
+| PATCH | `/api/v1/gateway/devices/:id` | FCM token / device info refresh; `:id` must be the key's device (403) |
+| PATCH | `/api/v1/gateway/devices/:id/sms-status` | `{smsId, status: SENT\|DELIVERED\|FAILED\|DELIVERY_FAILED, *AtInMillis?, errorCode?, errorMessage?}`; a lower-ranked status never regresses a higher one; mirrored to `submissions.sms_status` |
+| POST | `/api/v1/gateway/devices/:id/receive-sms` | `{sender, message, receivedAtInMillis}` → inbound `sms_messages` row |
+
+Outbound push: FCM data message `{ data: { smsData: JSON({smsId, smsBatchId, message, recipients,
+smsBody, receivers}) }, android: { priority: 'high' } }`. `UNREGISTERED` responses clear the
+device's `fcm_token`.
+
+### Pipeline
+
+In `POST /api/v1/forms/:slug`, after the email attempt (and only for submissions that passed every
+check), `sms_enabled` forms render `sms_template` (`{{form}}`, `{{fields}}`, `{{<field>}}`) and call
+`sendSms`. The result (`queued`/`failed` + error) is stored on the submission. The HTTP response is
+decided by the email result alone. `/api/v1/send` never sends SMS.
+
+### Admin API additions
+
+- `GET/POST /api/admin/sms/settings`, `DELETE /api/admin/sms/settings/firebase`
+- `GET/POST /api/admin/sms/devices`, `PATCH/DELETE /api/admin/sms/devices/:id`,
+  `POST /api/admin/sms/devices/:id/regenerate-key` (key shown once; clears the push token)
+- `POST /api/admin/sms/test {to, device_id?}`
+- `GET /api/admin/sms/messages?direction=&status=&device_id=&page=`, `GET /api/admin/sms/messages/:id`
+- Forms accept `sms_enabled`, `sms_number` (normalized to E.164; required when enabled),
+  `sms_template`, `sms_device_id`. `GET /api/admin/me` adds `smsConfigured`.
+
+### Admin UI
+
+New **SMS** page: Firebase credentials, defaults, phones (add → one-time key + QR + setup steps,
+default/enable/new key/delete), test SMS with live status, and a sent/received message log. The form
+editor gains an SMS section; Logs shows an SMS status column.
+
 ## Build & run
 
 - `npm run dev` — tsx watch server (port 3000) + instructions to run `npm run dev` in

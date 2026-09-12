@@ -82,6 +82,7 @@ export default function Logs() {
                   <th className="px-5 py-2.5">Form</th>
                   <th className="px-5 py-2.5">Status</th>
                   <th className="px-5 py-2.5">Score</th>
+                  <th className="px-5 py-2.5">SMS</th>
                   <th className="px-5 py-2.5">Reply-to</th>
                   <th className="px-5 py-2.5">IP</th>
                   <th className="px-5 py-2.5">When</th>
@@ -104,13 +105,16 @@ export default function Logs() {
                         <StatusBadge status={s.status} />
                       </td>
                       <td className="px-5 py-3 font-mono text-xs text-gray-500 dark:text-gray-400">{s.spam_score}</td>
+                      <td className="px-5 py-3">
+                        {s.sms_status ? <StatusBadge status={s.sms_status} /> : <span className="text-gray-400">—</span>}
+                      </td>
                       <td className="px-5 py-3 text-gray-500 dark:text-gray-400">{s.reply_to ?? '—'}</td>
                       <td className="px-5 py-3 font-mono text-xs text-gray-500 dark:text-gray-400">{s.ip ?? '—'}</td>
                       <td className="px-5 py-3 text-gray-500 dark:text-gray-400">{formatDate(s.created_at)}</td>
                     </tr>
                     {expanded === s.id && (
                       <tr className="bg-gray-50 dark:bg-gray-800/40">
-                        <td colSpan={7} className="px-5 py-4">
+                        <td colSpan={8} className="px-5 py-4">
                           <ExpandedRow submission={s} />
                         </td>
                       </tr>
@@ -152,9 +156,15 @@ function ExpandedRow({ submission }: { submission: Submission }) {
           <span className="font-semibold">Error:</span> {submission.error}
         </div>
       )}
+      {submission.sms_error && (
+        <div className="rounded-md bg-amber-50 p-3 text-sm text-amber-800 ring-1 ring-inset ring-amber-600/20 dark:bg-amber-500/10 dark:text-amber-300 dark:ring-amber-500/20">
+          <span className="font-semibold">SMS error:</span> {submission.sms_error}
+        </div>
+      )}
       <div className="flex flex-wrap gap-x-5 gap-y-1 text-xs text-gray-500 dark:text-gray-400">
         <span>Spam score: <strong className="text-gray-700 dark:text-gray-200">{submission.spam_score}</strong></span>
         <span>Turnstile: <strong className="text-gray-700 dark:text-gray-200">{submission.turnstile_status ?? 'not recorded'}</strong></span>
+        <span>SMS: <strong className="text-gray-700 dark:text-gray-200">{submission.sms_status ? submission.sms_status.replace(/_/g, ' ') : 'not enabled'}</strong></span>
       </div>
       {submission.spam_reasons.length > 0 && (
         <div>

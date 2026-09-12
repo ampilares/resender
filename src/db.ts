@@ -16,8 +16,58 @@ export interface FormRow {
   enabled: number;
   turnstile_enabled: number;
   spam_score_threshold: number;
+  sms_enabled: number;
+  sms_number: string | null;
+  sms_template: string;
+  sms_device_id: string | null;
   created_at: string;
 }
+
+export interface SmsDeviceRow {
+  id: string;
+  name: string;
+  api_key_hash: string;
+  api_key_prefix: string;
+  fcm_token: string | null;
+  brand: string | null;
+  manufacturer: string | null;
+  model: string | null;
+  build_id: string | null;
+  os: string | null;
+  os_version: string | null;
+  app_version_name: string | null;
+  app_version_code: number | null;
+  enabled: number;
+  is_default: number;
+  registered_at: string | null;
+  last_seen_at: string | null;
+  created_at: string;
+}
+
+export type SmsDirection = 'outbound' | 'inbound';
+
+export interface SmsMessageRow {
+  id: string;
+  device_id: string | null;
+  direction: SmsDirection;
+  recipient: string | null;
+  sender: string | null;
+  message: string;
+  status: string;
+  error_code: string | null;
+  error_message: string | null;
+  form_id: string | null;
+  submission_id: string | null;
+  requested_at: string | null;
+  sent_at: string | null;
+  delivered_at: string | null;
+  failed_at: string | null;
+  received_at: string | null;
+  created_at: string;
+}
+
+/** Default per-form SMS template. Any submitted field can be referenced as {{field_name}}. */
+export const DEFAULT_SMS_TEMPLATE = 'New {{form}} submission from {{name}} {{email}} {{phone}}: {{message}}';
 
 export interface SubmissionRow {
   id: string;
@@ -32,6 +82,9 @@ export interface SubmissionRow {
   spam_reasons: string;
   turnstile_status: string | null;
   content_hash: string | null;
+  sms_status: string | null;
+  sms_error: string | null;
+  sms_message_id: string | null;
   created_at: string;
 }
 
@@ -112,6 +165,67 @@ const MIGRATIONS: Migration[] = [
         ALTER TABLE submissions ADD COLUMN content_hash TEXT;
         CREATE INDEX idx_submissions_content_hash_created
           ON submissions(form_id, content_hash, created_at DESC);
+      `);
+    },
+  },
+  {
+    version: 4,
+    name: 'sms gateway',
+    up(db) {
+      // SMS is opt-in per form; existing forms keep sms_enabled = 0.
+      db.prepare(`ALTER TABLE forms ADD COLUMN sms_enabled INTEGER NOT NULL DEFAULT 0`).run();
+      db.prepare(`ALTER TABLE forms ADD COLUMN sms_number TEXT`).run();
+      // DDL cannot take bound parameters; the default is a constant without quotes to escape.
+      db.exec(`ALTER TABLE forms ADD COLUMN sms_template TEXT NOT NULL DEFAULT '${DEFAULT_SMS_TEMPLATE.replace(/'/g, "''")}'`);
+      db.exec(`
+        ALTER TABLE forms ADD COLUMN sms_device_id TEXT;
+        ALTER TABLE submissions ADD COLUMN sms_status TEXT;
+        ALTER TABLE submissions ADD COLUMN sms_error TEXT;
+        ALTER TABLE submissions ADD COLUMN sms_message_id TEXT;
+
+        CREATE TABLE sms_devices (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          api_key_hash TEXT NOT NULL UNIQUE,
+          api_key_prefix TEXT NOT NULL,
+          fcm_token TEXT,
+          brand TEXT,
+          manufacturer TEXT,
+          model TEXT,
+          build_id TEXT,
+          os TEXT,
+          os_version TEXT,
+          app_version_name TEXT,
+          app_version_code INTEGER,
+          enabled INTEGER NOT NULL DEFAULT 1,
+          is_default INTEGER NOT NULL DEFAULT 0,
+          registered_at TEXT,
+          last_seen_at TEXT,
+          created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE sms_messages (
+          id TEXT PRIMARY KEY,
+          device_id TEXT REFERENCES sms_devices(id) ON DELETE SET NULL,
+          direction TEXT NOT NULL,
+          recipient TEXT,
+          sender TEXT,
+          message TEXT NOT NULL,
+          status TEXT NOT NULL,
+          error_code TEXT,
+          error_message TEXT,
+          form_id TEXT,
+          submission_id TEXT,
+          requested_at TEXT,
+          sent_at TEXT,
+          delivered_at TEXT,
+          failed_at TEXT,
+          received_at TEXT,
+          created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX idx_sms_messages_created ON sms_messages(created_at DESC);
+        CREATE INDEX idx_sms_messages_submission ON sms_messages(submission_id);
+        CREATE INDEX idx_sms_messages_device_created ON sms_messages(device_id, created_at DESC);
       `);
     },
   },

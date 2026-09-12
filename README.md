@@ -222,6 +222,87 @@ Body: `subject` (required) plus at least one of `html` or `text`; `replyTo` opti
 
 `GET /api/health` → `{ "ok": true }`.
 
+## SMS notifications
+
+Any form can also **text a mobile number** on every accepted submission. resender does not use a
+paid SMS API: it embeds a small SMS gateway backend, and an Android phone with a SIM does the
+sending. The phone runs the open-source [selfhostsim](https://github.com/allenpilares/selfhostsim)
+gateway app (a textbee fork), pointed at your resender instance. resender pushes each job to the
+phone over Firebase Cloud Messaging (FCM); the phone sends the carrier SMS and reports
+sent/delivered/failed back. Replies the phone receives are stored and shown in the UI.
+
+### How it fits together
+
+```
+website form ──▶ resender ──(email)──▶ your inbox
+                    │
+                    └──(FCM data push)──▶ Android phone ──(SMS)──▶ your mobile
+                             ▲                 │
+                             └──(status / received SMS via x-api-key)──┘
+```
+
+### 1. Firebase project + service account
+
+FCM is Google's push channel and requires a (free) Firebase project.
+
+1. Create a project at <https://console.firebase.google.com> and add an **Android app** with package
+   name `com.selfhostsim.sms`. Download its `google-services.json` (used to build the app below).
+2. In *Project settings → Service accounts*, click **Generate new private key** and download the
+   JSON. In resender go to **SMS → Firebase service account**, paste or upload that file. It is
+   stored in the SQLite `settings` table like the SMTP password (same trade-off; keep `DATA_DIR`
+   private).
+
+The service account and the `google-services.json` **must belong to the same Firebase project**, or
+pushes will never reach the phone.
+
+### 2. Build and install the gateway app
+
+From the selfhostsim repository (`android/`):
+
+1. Copy your `google-services.json` to `app/src/prod/google-services.json`.
+2. Build: `./gradlew assembleProdRelease` (or open the project in Android Studio) and install the APK
+   on the phone. Grant the SMS permissions it asks for.
+
+### 3. Register the phone
+
+1. In resender, **SMS → Phones → Add phone**. Give it a name; resender shows a one-time device key
+   (`rsd_…`) and a QR code.
+2. In the app, set **API Base URL** to `https://<your-resender-host>/api/v1/` (trailing slash), scan
+   the QR code or paste the key, and tap **Register**. Turn the gateway switch on. The phone must be
+   able to reach resender over HTTPS (Android blocks plain HTTP by default).
+3. Back in resender the phone shows **connected**. Use **Send a test SMS** to confirm delivery.
+
+The app only ever calls four endpoints on resender, all authenticated with the device key in the
+`x-api-key` header: `POST /api/v1/gateway/devices`, `PATCH /api/v1/gateway/devices/:id`,
+`PATCH …/:id/sms-status` and `POST …/:id/receive-sms`.
+
+### 4. Enable SMS on a form
+
+Edit the form and tick **Send SMS notification**. Set the mobile number (national `0414 511 285` or
+international `+61…` format; the default country code is configurable under **SMS → Defaults**),
+optionally pick which phone sends it, and adjust the message template. Placeholders:
+
+| Placeholder | Renders |
+|---|---|
+| `{{form}}` | the form name |
+| `{{fields}}` | every submitted field as `Label: value` lines |
+| `{{name}}`, `{{email}}`, `{{message}}`, … | any submitted field (case- and underscore-insensitive) |
+
+Default: `New {{form}} submission from {{name}} {{email}} {{phone}}: {{message}}`. Messages are
+trimmed and truncated to the configured maximum length (default 320 characters, about two segments).
+
+Behaviour notes:
+
+- SMS is sent only for submissions that pass every check (spam, honeypot, rate limit, Turnstile).
+  Spam never triggers a text.
+- Email and SMS are independent. A failed SMS is recorded on the submission (**Logs** shows an SMS
+  column and the error) but never changes the response the website receives.
+- The SMS goes to the number configured on the form, never to anything in the payload, so the
+  gateway cannot be used as an SMS relay. `POST /api/v1/send` is email-only.
+- Delivery status (queued → sent → delivered, or failed) updates as the phone reports it. If Firebase
+  reports the phone's push token as dead, the phone is shown as *disconnected* until the app
+  re-registers (it does so automatically when it next starts).
+
 ## Reverse proxy
 
 Run resender behind a TLS-terminating proxy and set `TRUST_PROXY=true` so client IPs (used for rate
@@ -279,6 +360,9 @@ With either proxy in front, set `TRUST_PROXY=true` in resender's environment.
   tokens and other reserved control fields are stripped before logging or delivery.
 - **Admin session.** Single admin password (constant-time compare, 1s delay on failure). The session
   is an HMAC-signed, HTTP-only cookie (7-day expiry); no session table.
+- **SMS gateway.** The phone authenticates with a per-device `rsd_` key (hashed like form keys) and
+  can only update its own device record and messages. Outbound texts go exclusively to the number
+  configured on the form. Device registration is rate limited per IP.
 
 ## Local development
 
@@ -316,9 +400,15 @@ resender/
 │   ├── auth.ts             # admin session (signed cookie) + API-key hashing
 │   ├── rateLimit.ts        # in-memory sliding-window limiter (per IP+form)
 │   ├── emailTemplate.ts    # HTML/text rendering of a submission
+│   ├── sms/
+│   │   ├── fcm.ts          # minimal FCM HTTP v1 client (service-account JWT, no firebase-admin)
+│   │   ├── gateway.ts      # devices, outbound queueing, status updates, inbound SMS
+│   │   ├── phone.ts        # E.164 normalization
+│   │   └── template.ts     # per-form SMS template rendering
 │   └── routes/
 │       ├── public.ts       # POST /api/v1/forms/:slug, POST /api/v1/send, GET /api/health
-│       └── admin.ts        # /api/admin/* (login, forms, settings, submissions, stats)
+│       ├── gateway.ts      # /api/v1/gateway/* — the Android gateway app's API (x-api-key)
+│       └── admin.ts        # /api/admin/* (login, forms, settings, submissions, stats, sms)
 ├── web/                    # Vite + React + Tailwind admin UI (own package.json)
 ├── data/                   # runtime SQLite DB + secret (gitignored)
 ├── references/maildrop/    # SMTP provider-detection reference that inspired mailer.ts
