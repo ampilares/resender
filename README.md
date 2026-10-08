@@ -420,3 +420,29 @@ resender/
 ## License
 
 MIT © 2026 Allen Pilares. See [LICENSE](./LICENSE).
+
+## Transactional email for Comrade
+
+`POST /api/v1/transactional/send` is a separate server-only endpoint. Existing form keys and
+`/api/v1/send` retain fixed-recipient behavior. It is disabled until `TRANSACTIONAL_API_KEY_SHA256`
+is configured with the lowercase SHA-256 hex digest of a random key formatted `rtk_` plus 64 hex
+characters. Store the raw key only in the calling worker's secret environment as `RESENDER_API_KEY`;
+Resender needs only its hash. Rotate by changing the hash and caller key together.
+
+Send JSON with exactly `to` (one email address), `subject`, and `text`, plus `Authorization: Bearer …`
+and a stable `Idempotency-Key` header (1–150 letters, digits, colons, underscores or hyphens).
+The sender is the SMTP account/alias configured in Settings. Requests cannot override it, add CC/BCC,
+or use browser Origin headers. Configure `RESENDER_URL=https://resender.allenpilares.com` in Comrade.
+
+`TRANSACTIONAL_DAILY_LIMIT` defaults to 100 attempts per rolling 24 hours; zero pauses new deliveries.
+Successful replays do not consume the limit. The SQLite `transactional_messages` table stores request
+hashes, status and SMTP message IDs, never message text, recipient addresses or raw API keys.
+Keep this table in backups: losing it loses replay protection. Entries are deliberately not expired.
+
+Requests reserve their key before SMTP. A crash, timeout or SMTP error leaves delivery uncertain and
+blocks automatic resending. Check the SMTP provider's delivery history before manually reconciling an
+`unknown`/`sending` record. Do not delete a record or invent another key to retry an uncertain send.
+A reused key with changed content is rejected. Comrade freezes each pending digest in its database
+outbox and removes the payload after confirmed delivery. SMTP acceptance is not proof of inbox delivery.
+
+Validation: `npm run typecheck` and `npm test`. Tests inject a fake SMTP sender and send no email.

@@ -11,6 +11,7 @@ import { RateLimiter } from './rateLimit.js';
 import { publicRoutes } from './routes/public.js';
 import { adminRoutes } from './routes/admin.js';
 import { gatewayRoutes } from './routes/gateway.js';
+import { transactionalRoutes } from './routes/transactional.js';
 
 export interface AppContext {
   db: DB;
@@ -40,6 +41,7 @@ export async function buildServer(config: Config): Promise<FastifyInstance> {
   await app.register(publicRoutes, { ctx });
   await app.register(gatewayRoutes, { ctx });
   await app.register(adminRoutes, { ctx });
+  await app.register(transactionalRoutes, { db, keyHash: process.env.TRANSACTIONAL_API_KEY_SHA256, dailyLimit: Number(process.env.TRANSACTIONAL_DAILY_LIMIT ?? 100) });
 
   await registerStatic(app);
 

@@ -25,6 +25,8 @@ services:
       # Optional, strongly recommended spam protection. Configure a Turnstile
       # widget for the websites that host your forms. Set both values together
       # in .env; empty defaults leave the feature disabled.
+      TRANSACTIONAL_API_KEY_SHA256: "${TRANSACTIONAL_API_KEY_SHA256:-}"
+      TRANSACTIONAL_DAILY_LIMIT: "${TRANSACTIONAL_DAILY_LIMIT:-100}"
       TURNSTILE_SITE_KEY: "${TURNSTILE_SITE_KEY:-}"
       TURNSTILE_SECRET_KEY: "${TURNSTILE_SECRET_KEY:-}"
       #
