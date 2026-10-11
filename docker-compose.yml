@@ -1,8 +1,6 @@
 services:
   resender:
     build: .
-    # Or pull a prebuilt image instead of building:
-    # image: ghcr.io/allenpilares/resender:latest
     container_name: resender
     restart: unless-stopped
     ports:
