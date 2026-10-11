@@ -23,7 +23,7 @@ provider auto-detection) was inspired by the `references/maildrop` library inclu
 ## Quickstart (Docker Compose)
 
 ```bash
-git clone https://github.com/allenpilares/resender.git
+git clone https://github.com/ampilares/resender.git
 cd resender
 
 # optional: seed environment overrides
@@ -91,7 +91,7 @@ which requires 2-Step Verification:
 
 To send from a Google Workspace alias, use the primary Google account as **SMTP login email** and
 its app password, then enter the alias as **From email**. For example, an SMTP login of
-`amp@rethink-tech.com` can send as `mail@pixelmate.com.au` when that alias is configured and
+`owner@example.com` can send as `forms@example.com` when that alias is configured and
 permitted in Google Workspace. Because Workspace domains cannot be auto-detected as Gmail, also
 enable **Use custom SMTP server** and set `smtp.gmail.com`, port `587`, with the secure/port-465
 option off (STARTTLS is negotiated automatically).
@@ -102,14 +102,6 @@ Zoho, iCloud). For anything else, expand **Use custom SMTP** and set host/port/s
 > **Gmail sending limit:** a regular Gmail account can send roughly **500 emails per day**. That is
 > plenty for typical contact-form traffic, but if you expect more, use Google Workspace (higher
 > limits) or a dedicated provider via custom SMTP.
-
-## Screenshots
-
-_Add screenshots of the admin UI here._
-
-- `docs/dashboard.png` — dashboard with stat cards and recent submissions
-- `docs/forms.png` — form detail with copy-ready snippets
-- `docs/settings.png` — Gmail / SMTP settings with the test-email button
 
 ## Integration examples
 
